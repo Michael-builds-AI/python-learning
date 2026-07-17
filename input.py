@@ -1,6 +1,2 @@
-#variables
-name = "Excellent"
-age = 21
-#print information
-print(name)
-print(age)
+#input
+print(float("7.5"))
