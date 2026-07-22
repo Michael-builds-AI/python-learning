@@ -1,2 +1,6 @@
 #input
-print(float("7.5"))
+count = 10
+
+while count <= 5:
+    print (count)
+    count = count - 1
