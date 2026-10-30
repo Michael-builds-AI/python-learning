@@ -200,17 +200,50 @@ def citations_are_valid(brief: str, evidence: list[Chunk]) -> bool:
     )
 
 
+
 def citation_is_valid(citation: str, allowed_citations: set[str]) -> bool:
     """Validate individual or grouped citations inside one pair of brackets."""
     citation_parts = re.split(r";\s*", citation[1:-1])
-    return all(
-        citation_part_is_valid(f"[{citation_part}]", allowed_citations)
-        for citation_part in citation_parts
-    )
+
+    if not citation_parts:
+        return False
+
+    filename = None
+    validated_parts = []
+
+    for part in citation_parts:
+        part = part.strip()
+
+        # A citation may omit the filename only when it follows
+        # a citation that already supplied the filename.
+        if filename is not None and re.fullmatch(r"p{1,2}\.\s*\d+", part):
+            part = f"{filename}, {part}"
+        else:
+            match = re.match(r"^(.+?\.(?:pdf|docx|txt)),\s*(.+)$", part, re.IGNORECASE)
+            if not match:
+                return False
+            filename, page_reference = match.groups()
+            part = f"{filename}, {page_reference}"
+
+        if part.startswith(filename + ", pp. "):
+            if not citation_part_is_valid(f"[{part}]", allowed_citations):
+                return False
+        else:
+            match = re.fullmatch(r"(.+),\s*p\.\s*(\d+)", part)
+            if not match:
+                return False
+            file_name, page_number = match.groups()
+            if f"[{file_name}, p. {page_number}]" not in allowed_citations:
+                return False
+
+        validated_parts.append(part)
+
+    return bool(validated_parts)
+
 
 
 def citation_part_is_valid(citation: str, allowed_citations: set[str]) -> bool:
-    """Validate one individual or grouped citation against retrieved evidence."""
+    """Validate individual or grouped citations against retrieved evidence."""
     if citation in allowed_citations:
         return True
 
@@ -219,24 +252,27 @@ def citation_part_is_valid(citation: str, allowed_citations: set[str]) -> bool:
         return False
 
     filename, page_references = grouped_match.groups()
-    page_references = page_references.split(", ")
-    if len(page_references) == 1 and "–" not in page_references[0] and "-" not in page_references[0]:
-        return False
-
     cited_pages: list[int] = []
-    for page_reference in page_references:      
-        page_range = re.fullmatch(r"(\d+)\s*(?:[–-]\s*(\d+))?", page_reference)
+
+    for page_reference in page_references.split(", "):
+        page_range = re.fullmatch(r"(\d+)(?:\s*[–-]\s*(\d+))?", page_reference)
         if not page_range:
             return False
 
         first_page = int(page_range.group(1))
         last_page = int(page_range.group(2) or first_page)
+
         if last_page < first_page:
             return False
+
         cited_pages.extend(range(first_page, last_page + 1))
 
+    if len(cited_pages) < 2:
+        return False
+
     return all(
-        f"[{filename}, p. {page_number}]" in allowed_citations for page_number in cited_pages
+        f"[{filename}, p. {page_number}]" in allowed_citations
+        for page_number in cited_pages
     )
 
 
@@ -341,7 +377,50 @@ If the evidence does not answer the question, clearly state:
 'The available evidence is insufficient to answer this question.'
 You may still summarize what the evidence does show.
 
-Do not give investment, buy/sell, or price predictions.""" 
+Do not give investment, buy/sell, or price predictions.
+
+FINAL ANSWER STRUCTURE:
+For questions about revenue growth and profitability, use these four short sections:
+1. Direct revenue drivers explicitly supported by the evidence.
+2. Profitability and margin factors explicitly supported by the evidence.
+3. Reported financial results and relevant context.
+4. Limitations or relationships the evidence does not establish.
+
+LENGTH LIMIT:
+Keep the complete answer under 300 words, including the conclusion.
+Use four short numbered sections with no more than two bullet points
+per section. Prioritize the strongest findings and combine related
+facts where appropriate. Include complete, valid citations immediately
+after supported claims. Do not repeat findings or add a separate
+summary after the four sections.
+
+Keep the entire answer under 650 words, preferably 400–500 words.
+Use concise bullet points and avoid repeating the same finding in multiple sections.
+Prioritize the strongest evidence and include citations immediately after the
+claims they support. Finish every section and the conclusion before stopping.
+Do not begin a new claim if there is insufficient space to complete the answer
+and provide its citation.
+
+A passage containing an analyst's question is not evidence that the question's
+assumption is true or that a proposed explanation is correct. Use management's
+answer or another substantive source passage to support the claim. Do not cite
+a question-only passage as evidence for the answer.
+
+Do not claim that fintech revenue grew, or that a particular factor caused
+fintech revenue growth, unless the retrieved evidence explicitly establishes it.
+Distinguish an observed revenue contribution from an explanation of its cause.
+
+Do not list macroeconomic conditions as direct revenue drivers unless the
+evidence explicitly connects them to revenue growth.
+
+A passage containing an analyst's question is not evidence that the question's
+assumption is true or that a proposed explanation is correct. Use management's
+answer or another substantive source passage to support the claim. Do not cite
+a question-only passage as evidence for the answer.
+
+Do not claim that fintech revenue grew, or that a particular factor caused
+fintech revenue growth, unless the retrieved evidence explicitly establishes it.
+Distinguish an observed revenue contribution from an explanation of its cause."""
     evidence_text = format_evidence(evidence)
     if debug:
         print("\n--- Debug: evidence sent to model ---")
@@ -356,8 +435,20 @@ Do not give investment, buy/sell, or price predictions."""
             f"Retrieved evidence:\n{evidence_text}"
         ),
     )
+
+    if response.status == "incomplete":
+        details = response.incomplete_details
+        reason = details.reason if details else "unknown"
+        raise RuntimeError(
+            f"The research brief was incomplete (reason: {reason}). "
+            "Try a shorter question or reduce the requested answer length."
+        )
+
     raw_response = response.output_text
+    print("Response status:", response.status)
+    print("Output details:", response.incomplete_details)
     brief = raw_response.strip()
+
     if debug:
         print("\n--- Debug: raw model response ---")
         print(raw_response)

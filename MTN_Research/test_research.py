@@ -97,3 +97,14 @@ def test_page_range_with_spaces_around_dash(evidence):
     brief = "The result appears here [report.pdf, pp. 7 – 9]."
 
     assert citations_are_valid(brief, evidence)
+
+def test_same_file_multiple_pages_with_semicolon(evidence):
+    brief = "The report confirms this [report.pdf, p. 3; p. 5]."
+
+    assert citations_are_valid(brief, evidence)
+
+
+def test_grouped_citation_with_normal_hyphen(evidence):
+    brief = "The result appears here [report.pdf, pp. 7-9]."
+
+    assert citations_are_valid(brief, evidence)
